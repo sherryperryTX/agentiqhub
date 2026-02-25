@@ -11,6 +11,7 @@ export default function CourseApp() {
   const [page, setPage] = useState<Page>("login");
   const [user, setUser] = useState<User>(null);
   const [userTier, setUserTier] = useState<"free" | "premium">("free");
+  const [isAdmin, setIsAdmin] = useState(false);
   const [currentModule, setCurrentModule] = useState<Module | null>(null);
   const [currentLesson, setCurrentLesson] = useState<Lesson | null>(null);
   const [completedModules, setCompletedModules] = useState<number[]>([]);
@@ -55,6 +56,7 @@ export default function CourseApp() {
 
     setUser({ id: userId, email, full_name: profile.full_name || "" });
     setUserTier(profile.tier || "free");
+    setIsAdmin(profile.is_admin || false);
 
     // Load progress
     const { data: completions } = await supabase.from("module_completions").select("module_id").eq("user_id", userId);
@@ -280,6 +282,9 @@ export default function CourseApp() {
             <span className="text-sm text-gray-500">Welcome, {user?.full_name || user?.email}</span>
             {userTier === "premium" && (
               <span className="bg-gold text-white text-xs font-bold px-3 py-1 rounded-full">PREMIUM</span>
+            )}
+            {isAdmin && (
+              <a href="/admin" className="bg-terra text-white text-xs font-bold px-3 py-1 rounded-full hover:bg-terra-dark transition-colors">ADMIN</a>
             )}
             <button onClick={handleLogout} className="text-sm text-gray-400 hover:text-gray-600">Sign Out</button>
           </div>
