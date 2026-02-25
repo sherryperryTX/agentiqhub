@@ -1,25 +1,28 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-function getSupabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
-  return createClient(url, key);
-}
-
 async function verifyAdmin(authHeader: string | null): Promise<boolean> {
-  const supabaseAdmin = getSupabaseAdmin();
-  if (!supabaseAdmin) return false;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return false;
   if (!authHeader?.startsWith("Bearer ")) return false;
+
   const token = authHeader.replace("Bearer ", "");
-  const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+
+  // Create a client using the user's JWT token directly
+  const supabaseUser = createClient(url, key, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+
+  const { data: { user } } = await supabaseUser.auth.getUser(token);
   if (!user) return false;
-  const { data: profile } = await supabaseAdmin
+
+  const { data: profile } = await supabaseUser
     .from("profiles")
     .select("is_admin")
     .eq("id", user.id)
     .single();
+
   return profile?.is_admin === true;
 }
 
