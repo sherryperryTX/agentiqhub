@@ -50,8 +50,8 @@ export default function LandingPage() {
             <a href="#curriculum" className="text-navy hover:text-terra transition-colors">Curriculum</a>
             <a href="#pricing" className="text-navy hover:text-terra transition-colors">Pricing</a>
             <a href="#faq" className="text-navy hover:text-terra transition-colors">FAQ</a>
-            <Link href="/dashboard" className="bg-navy text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-navy-dark transition-colors">
-              Start Learning
+            <Link href="/courses" className="bg-navy text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-navy-dark transition-colors">
+              Browse Courses
             </Link>
           </div>
         </div>
@@ -61,21 +61,21 @@ export default function LandingPage() {
       <section className="pt-32 pb-20 px-6">
         <div className="max-w-4xl mx-auto text-center">
           <div className="inline-block bg-terra/10 text-terra px-4 py-1.5 rounded-full text-sm font-semibold mb-6">
-            🏅 Professional Certification Course
+            🏅 Professional Training Platform
           </div>
           <h1 className="text-5xl md:text-6xl font-display font-bold text-navy mb-6 leading-tight">
-            Master AI for<br />Real Estate
+            Agent Training<br />Powered by AI
           </h1>
           <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-            The premier certification course for agents who want to save hours every week,
-            win more listings, and stay ahead of the competition.
+            Professional training courses for real estate agents — AI mastery, tools training,
+            REO certification, and more. Learn at your own pace, earn certifications.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-            <Link href="/dashboard" className="bg-terra text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-terra-dark transition-all shadow-lg hover:shadow-xl">
-              Start Free — No Credit Card
+            <Link href="/courses" className="bg-terra text-white px-8 py-4 rounded-xl text-lg font-semibold hover:bg-terra-dark transition-all shadow-lg hover:shadow-xl">
+              Browse Courses
             </Link>
             <a href="#curriculum" className="border-2 border-navy text-navy px-8 py-4 rounded-xl text-lg font-semibold hover:bg-navy hover:text-white transition-all">
-              View Curriculum
+              View AI Mastery Curriculum
             </a>
           </div>
           <div className="flex justify-center gap-8 text-sm text-gray-500">
@@ -145,7 +145,7 @@ export default function LandingPage() {
                   <li key={i} className="flex gap-2"><span className="text-accent">✓</span><span className="text-gray-700 text-sm">{item}</span></li>
                 ))}
               </ul>
-              <Link href="/dashboard" className="block text-center bg-accent text-white py-3 rounded-xl font-semibold hover:bg-accent-dark transition-colors">
+              <Link href="/courses" className="block text-center bg-accent text-white py-3 rounded-xl font-semibold hover:bg-accent-dark transition-colors">
                 Start Free
               </Link>
             </div>
@@ -162,7 +162,7 @@ export default function LandingPage() {
                   <li key={i} className="flex gap-2"><span className="text-gold">✓</span><span className="text-white/90 text-sm">{item}</span></li>
                 ))}
               </ul>
-              <Link href="/dashboard" className="block text-center bg-terra text-white py-3 rounded-xl font-semibold hover:bg-terra-dark transition-colors">
+              <Link href="/courses" className="block text-center bg-terra text-white py-3 rounded-xl font-semibold hover:bg-terra-dark transition-colors">
                 Get Premium Access
               </Link>
             </div>

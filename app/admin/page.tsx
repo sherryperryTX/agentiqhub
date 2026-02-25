@@ -3,19 +3,26 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
 // ===== Types =====
-type Profile = { id: string; email: string; full_name: string; tier: "free" | "premium"; is_admin: boolean; created_at: string };
+type Profile = { id: string; email: string; full_name: string; tier: "free" | "premium"; is_admin: boolean; is_internal: boolean; created_at: string };
 type ModuleCompletion = { user_id: string; module_id: number };
 type DBModule = { id: number; title: string; section: string; description: string; tier: string; sort_order: number };
 type DBLesson = { id: string; module_id: number; title: string; content: string; video_url: string | null; handout_url: string | null; handout_name: string | null; sort_order: number };
 type DBQuiz = { id: number; module_id: number; question: string; options: string[]; correct_index: number; sort_order: number };
 type ChatMessage = { role: "user" | "assistant"; content: string };
-type Tab = "users" | "content" | "ai";
+type DBCourse = { id: number; slug: string; title: string; description: string; short_description: string; image_url: string | null; visibility: "public" | "internal"; price: number; stripe_price_id: string | null; is_active: boolean; sort_order: number; created_at: string; updated_at: string };
+type Tab = "courses" | "content" | "ai" | "users";
 
 export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("content");
   const [authToken, setAuthToken] = useState("");
+
+  // Courses management
+  const [courses, setCourses] = useState<DBCourse[]>([]);
+  const [showNewCourse, setShowNewCourse] = useState(false);
+  const [editingCourse, setEditingCourse] = useState<DBCourse | null>(null);
+  const [selectedCourseFilter, setSelectedCourseFilter] = useState<number | null>(null);
 
   // User management
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -35,6 +42,8 @@ export default function AdminDashboard() {
   const [showNewQuiz, setShowNewQuiz] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // New course form
+  const [newCourse, setNewCourse] = useState({ title: "", slug: "", description: "", short_description: "", image_url: "", visibility: "public" as "public" | "internal", price: "0", stripe_price_id: "", is_active: true, sort_order: 0 });
   // New module form
   const [newModule, setNewModule] = useState({ title: "", section: "", description: "", tier: "premium" });
   // New lesson form
@@ -73,12 +82,13 @@ export default function AdminDashboard() {
     setIsAdmin(true);
 
     // Load all data in parallel
-    const [profilesRes, completionsRes, modulesRes, lessonsRes, quizzesRes] = await Promise.all([
+    const [profilesRes, completionsRes, modulesRes, lessonsRes, quizzesRes, coursesRes] = await Promise.all([
       supabase.from("profiles").select("*").order("created_at", { ascending: false }),
       supabase.from("module_completions").select("user_id, module_id"),
       supabase.from("course_modules").select("*").order("sort_order"),
       supabase.from("course_lessons").select("*").order("sort_order"),
       supabase.from("course_quizzes").select("*").order("sort_order"),
+      supabase.from("courses").select("*").order("sort_order"),
     ]);
 
     setProfiles(profilesRes.data || []);
@@ -86,6 +96,7 @@ export default function AdminDashboard() {
     setModules(modulesRes.data || []);
     setLessons(lessonsRes.data || []);
     setQuizzes(quizzesRes.data || []);
+    setCourses(coursesRes.data || []);
     setLoading(false);
   }
 
@@ -502,7 +513,68 @@ export default function AdminDashboard() {
     setUpdatingUser(null);
   }
 
+  async function toggleInternal(userId: string, currentIsInternal: boolean) {
+    setUpdatingUser(userId);
+    await supabase.from("profiles").update({ is_internal: !currentIsInternal }).eq("id", userId);
+    setProfiles(profiles.map(p => p.id === userId ? { ...p, is_internal: !currentIsInternal } : p));
+    setUpdatingUser(null);
+  }
+
   function getUserCompletions(userId: string) { return completions.filter(c => c.user_id === userId).length; }
+
+  // Courses management
+  async function saveNewCourse() {
+    if (!newCourse.title.trim() || !newCourse.slug.trim()) return;
+    setSaving(true);
+    const nextOrder = courses.length > 0 ? Math.max(...courses.map(c => c.sort_order)) + 1 : 1;
+    const priceInCents = Math.round(parseFloat(newCourse.price) * 100);
+    await supabase.from("courses").insert({
+      title: newCourse.title,
+      slug: newCourse.slug,
+      description: newCourse.description,
+      short_description: newCourse.short_description,
+      image_url: newCourse.image_url || null,
+      visibility: newCourse.visibility,
+      price: priceInCents,
+      stripe_price_id: newCourse.stripe_price_id || null,
+      is_active: newCourse.is_active,
+      sort_order: nextOrder,
+    });
+    await refreshCourses();
+    setNewCourse({ title: "", slug: "", description: "", short_description: "", image_url: "", visibility: "public", price: "0", stripe_price_id: "", is_active: true, sort_order: 0 });
+    setShowNewCourse(false);
+    setSaving(false);
+  }
+
+  async function updateCourse(course: DBCourse) {
+    setSaving(true);
+    await supabase.from("courses").update({
+      title: course.title,
+      slug: course.slug,
+      description: course.description,
+      short_description: course.short_description,
+      image_url: course.image_url,
+      visibility: course.visibility,
+      price: course.price,
+      stripe_price_id: course.stripe_price_id,
+      is_active: course.is_active,
+      sort_order: course.sort_order,
+    }).eq("id", course.id);
+    await refreshCourses();
+    setEditingCourse(null);
+    setSaving(false);
+  }
+
+  async function deleteCourse(id: number) {
+    if (!confirm("Delete this course? This action cannot be undone.")) return;
+    await supabase.from("courses").delete().eq("id", id);
+    await refreshCourses();
+  }
+
+  async function refreshCourses() {
+    const { data } = await supabase.from("courses").select("*").order("sort_order");
+    setCourses(data || []);
+  }
 
   const filteredProfiles = profiles.filter(p =>
     p.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -528,7 +600,7 @@ export default function AdminDashboard() {
           <div className="text-5xl mb-4">&#128274;</div>
           <h1 className="text-2xl font-display font-bold text-navy mb-2">Access Denied</h1>
           <p className="text-gray-500 mb-6">You need admin privileges to access this page.</p>
-          <a href="/dashboard" className="bg-navy text-white px-6 py-3 rounded-xl font-semibold hover:bg-navy-dark transition-colors inline-block">Back to Dashboard</a>
+          <a href="/courses" className="bg-navy text-white px-6 py-3 rounded-xl font-semibold hover:bg-navy-dark transition-colors inline-block">Back to Courses</a>
         </div>
       </div>
     );
@@ -548,7 +620,7 @@ export default function AdminDashboard() {
             <span className="bg-terra text-white text-xs font-bold px-3 py-1 rounded-full ml-2">ADMIN</span>
           </div>
           <div className="flex items-center gap-4">
-            <a href="/dashboard" className="text-sm text-white/70 hover:text-white transition-colors">&larr; Back to Course</a>
+            <a href="/courses" className="text-sm text-white/70 hover:text-white transition-colors">&larr; Back to Courses</a>
           </div>
         </div>
       </div>
@@ -557,6 +629,7 @@ export default function AdminDashboard() {
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-6 flex gap-1">
           {([
+            { id: "courses" as Tab, label: "Courses", icon: "&#127978;" },
             { id: "content" as Tab, label: "Content Manager", icon: "&#128218;" },
             { id: "ai" as Tab, label: "AI Assistant", icon: "&#129302;" },
             { id: "users" as Tab, label: "Users", icon: "&#128101;" },
@@ -576,16 +649,143 @@ export default function AdminDashboard() {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
+        {/* ========== COURSES TAB ========== */}
+        {activeTab === "courses" && (
+          <div>
+            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+              <div className="p-6 border-b flex items-center justify-between">
+                <h2 className="font-display font-bold text-navy text-xl">Course Management</h2>
+                <button onClick={() => setShowNewCourse(true)} className="bg-accent text-white text-sm font-bold px-4 py-2 rounded-lg hover:bg-accent/90">+ New Course</button>
+              </div>
+
+              {showNewCourse && (
+                <div className="p-6 bg-accent/5 border-b">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="text-xs font-semibold text-gray-500 mb-1 block">Title</label>
+                      <input placeholder="Course title" value={newCourse.title} onChange={e => setNewCourse({ ...newCourse, title: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-gray-500 mb-1 block">Slug</label>
+                      <input placeholder="course-slug" value={newCourse.slug} onChange={e => setNewCourse({ ...newCourse, slug: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                    </div>
+                  </div>
+                  <div className="mb-4">
+                    <label className="text-xs font-semibold text-gray-500 mb-1 block">Short Description</label>
+                    <input placeholder="Brief course description" value={newCourse.short_description} onChange={e => setNewCourse({ ...newCourse, short_description: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                  </div>
+                  <div className="mb-4">
+                    <label className="text-xs font-semibold text-gray-500 mb-1 block">Description</label>
+                    <textarea placeholder="Full course description" value={newCourse.description} onChange={e => setNewCourse({ ...newCourse, description: e.target.value })} rows={3} className="w-full px-3 py-2 border rounded-lg text-sm resize-none" />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="text-xs font-semibold text-gray-500 mb-1 block">Image URL</label>
+                      <input placeholder="https://..." value={newCourse.image_url} onChange={e => setNewCourse({ ...newCourse, image_url: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-gray-500 mb-1 block">Price (USD)</label>
+                      <input type="number" placeholder="0.00" value={newCourse.price} onChange={e => setNewCourse({ ...newCourse, price: e.target.value })} step="0.01" min="0" className="w-full px-3 py-2 border rounded-lg text-sm" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="text-xs font-semibold text-gray-500 mb-1 block">Stripe Price ID</label>
+                      <input placeholder="price_..." value={newCourse.stripe_price_id} onChange={e => setNewCourse({ ...newCourse, stripe_price_id: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-gray-500 mb-1 block">Visibility</label>
+                      <select value={newCourse.visibility} onChange={e => setNewCourse({ ...newCourse, visibility: e.target.value as "public" | "internal" })} className="w-full px-3 py-2 border rounded-lg text-sm">
+                        <option value="public">Public</option>
+                        <option value="internal">Internal</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <input type="checkbox" id="newCourseActive" checked={newCourse.is_active} onChange={e => setNewCourse({ ...newCourse, is_active: e.target.checked })} className="accent-accent" />
+                    <label htmlFor="newCourseActive" className="text-sm font-medium text-gray-700">Active</label>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={saveNewCourse} disabled={saving} className="bg-accent text-white text-sm px-4 py-2 rounded-lg">{saving ? "Saving..." : "Save Course"}</button>
+                    <button onClick={() => setShowNewCourse(false)} className="text-gray-500 text-sm px-4 py-2">Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50 text-left">
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Title</th>
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Slug</th>
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Visibility</th>
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Price</th>
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Active</th>
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Stripe ID</th>
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Sort Order</th>
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {courses.map(course => (
+                      <tr key={course.id} className="hover:bg-gray-50 transition-colors">
+                        {editingCourse?.id === course.id ? (
+                          <>
+                            <td className="px-6 py-4"><input value={editingCourse.title} onChange={e => setEditingCourse({ ...editingCourse, title: e.target.value })} className="px-3 py-1.5 border rounded-lg text-sm w-full" /></td>
+                            <td className="px-6 py-4"><input value={editingCourse.slug} onChange={e => setEditingCourse({ ...editingCourse, slug: e.target.value })} className="px-3 py-1.5 border rounded-lg text-sm w-full" /></td>
+                            <td className="px-6 py-4"><select value={editingCourse.visibility} onChange={e => setEditingCourse({ ...editingCourse, visibility: e.target.value as "public" | "internal" })} className="px-3 py-1.5 border rounded-lg text-sm"><option value="public">Public</option><option value="internal">Internal</option></select></td>
+                            <td className="px-6 py-4"><input type="number" value={editingCourse.price / 100} onChange={e => setEditingCourse({ ...editingCourse, price: Math.round(parseFloat(e.target.value) * 100) })} className="px-3 py-1.5 border rounded-lg text-sm w-20" step="0.01" min="0" /></td>
+                            <td className="px-6 py-4"><input type="checkbox" checked={editingCourse.is_active} onChange={e => setEditingCourse({ ...editingCourse, is_active: e.target.checked })} className="accent-accent" /></td>
+                            <td className="px-6 py-4"><input value={editingCourse.stripe_price_id || ""} onChange={e => setEditingCourse({ ...editingCourse, stripe_price_id: e.target.value })} className="px-3 py-1.5 border rounded-lg text-sm w-full" /></td>
+                            <td className="px-6 py-4"><input type="number" value={editingCourse.sort_order} onChange={e => setEditingCourse({ ...editingCourse, sort_order: parseInt(e.target.value) })} className="px-3 py-1.5 border rounded-lg text-sm w-20" /></td>
+                            <td className="px-6 py-4"><div className="flex gap-2"><button onClick={() => updateCourse(editingCourse)} disabled={saving} className="text-accent text-xs px-2 py-1 rounded hover:bg-accent/10">{saving ? "..." : "Save"}</button><button onClick={() => setEditingCourse(null)} className="text-gray-500 text-xs px-2 py-1">Cancel</button></div></td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="px-6 py-4"><div className="font-semibold text-navy text-sm">{course.title}</div></td>
+                            <td className="px-6 py-4"><span className="text-sm text-gray-600">{course.slug}</span></td>
+                            <td className="px-6 py-4"><span className={`text-xs font-bold px-3 py-1 rounded-full ${course.visibility === "public" ? "bg-accent/10 text-accent" : "bg-orange-50 text-orange-600"}`}>{course.visibility.toUpperCase()}</span></td>
+                            <td className="px-6 py-4"><span className="text-sm text-gray-700">${(course.price / 100).toFixed(2)}</span></td>
+                            <td className="px-6 py-4"><span className={`text-xs font-bold px-3 py-1 rounded-full ${course.is_active ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-500"}`}>{course.is_active ? "ACTIVE" : "INACTIVE"}</span></td>
+                            <td className="px-6 py-4"><span className="text-xs text-gray-500">{course.stripe_price_id || "—"}</span></td>
+                            <td className="px-6 py-4"><span className="text-sm text-gray-700">{course.sort_order}</span></td>
+                            <td className="px-6 py-4"><div className="flex gap-2"><button onClick={() => setEditingCourse({ ...course })} className="text-accent text-xs px-2 py-1 rounded hover:bg-accent/10">Edit</button><button onClick={() => deleteCourse(course.id)} className="text-red-500 text-xs px-2 py-1 rounded hover:bg-red-50">Delete</button></div></td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {courses.length === 0 && (
+                <div className="p-12 text-center text-gray-400">No courses yet. Create your first course to get started.</div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ========== CONTENT TAB ========== */}
         {activeTab === "content" && (
-          <div className="flex gap-6">
-            {/* Module list */}
-            <div className="w-80 flex-shrink-0">
-              <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                <div className="p-4 border-b flex items-center justify-between">
-                  <h2 className="font-display font-bold text-navy">Modules</h2>
-                  <button onClick={() => setShowNewModule(true)} className="bg-accent text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-accent/90">+ New</button>
-                </div>
+          <div className="flex flex-col gap-6">
+            {/* Course filter */}
+            <div className="bg-white rounded-2xl shadow-sm p-4">
+              <label className="text-xs font-semibold text-gray-500 mb-2 block">Filter by Course</label>
+              <select value={selectedCourseFilter || ""} onChange={e => setSelectedCourseFilter(e.target.value ? parseInt(e.target.value) : null)} className="w-full md:w-80 px-3 py-2 border rounded-lg text-sm">
+                <option value="">All Modules (No Filter)</option>
+                {courses.map(course => (
+                  <option key={course.id} value={course.id}>{course.title}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex gap-6">
+              {/* Module list */}
+              <div className="w-80 flex-shrink-0">
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                  <div className="p-4 border-b flex items-center justify-between">
+                    <h2 className="font-display font-bold text-navy">Modules</h2>
+                    <button onClick={() => setShowNewModule(true)} className="bg-accent text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-accent/90">+ New</button>
+                  </div>
 
                 {showNewModule && (
                   <div className="p-4 bg-accent/5 border-b">
@@ -803,6 +1003,7 @@ export default function AdminDashboard() {
                   <p className="text-gray-500">Click a module from the list to view and edit its content, or use the AI Assistant to generate new modules.</p>
                 </div>
               )}
+            </div>
             </div>
           </div>
         )}
@@ -1050,6 +1251,7 @@ export default function AdminDashboard() {
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Tier</th>
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Internal</th>
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Modules Done</th>
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Joined</th>
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
@@ -1072,10 +1274,15 @@ export default function AdminDashboard() {
                             {profile.tier?.toUpperCase() || "FREE"}
                           </span>
                         </td>
+                        <td className="px-6 py-4">
+                          <span className={`text-xs font-bold px-3 py-1 rounded-full ${profile.is_internal ? "bg-purple-50 text-purple-600" : "bg-gray-100 text-gray-500"}`}>
+                            {profile.is_internal ? "YES" : "NO"}
+                          </span>
+                        </td>
                         <td className="px-6 py-4"><span className="text-sm text-gray-700">{getUserCompletions(profile.id)} / {modules.length}</span></td>
                         <td className="px-6 py-4"><span className="text-sm text-gray-500">{profile.created_at ? new Date(profile.created_at).toLocaleDateString() : "\u2014"}</span></td>
                         <td className="px-6 py-4">
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 flex-wrap">
                             <button
                               onClick={() => toggleTier(profile.id, profile.tier)}
                               disabled={updatingUser === profile.id}
@@ -1084,6 +1291,15 @@ export default function AdminDashboard() {
                               } ${updatingUser === profile.id ? "opacity-50 cursor-wait" : ""}`}
                             >
                               {updatingUser === profile.id ? "..." : profile.tier === "premium" ? "Downgrade" : "Upgrade"}
+                            </button>
+                            <button
+                              onClick={() => toggleInternal(profile.id, profile.is_internal)}
+                              disabled={updatingUser === profile.id}
+                              className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                                profile.is_internal ? "bg-pink-50 text-pink-600 hover:bg-pink-100" : "bg-blue-50 text-blue-600 hover:bg-blue-100"
+                              } ${updatingUser === profile.id ? "opacity-50 cursor-wait" : ""}`}
+                            >
+                              {updatingUser === profile.id ? "..." : profile.is_internal ? "Remove Internal" : "Make Internal"}
                             </button>
                             <button
                               onClick={() => toggleAdmin(profile.id, profile.is_admin)}

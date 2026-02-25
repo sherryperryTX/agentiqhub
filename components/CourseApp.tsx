@@ -1,24 +1,34 @@
 "use client";
 import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase, getUserCourseAccess, enrollInFreeCourse } from "@/lib/supabase";
 import { MODULES as STATIC_MODULES, SECTIONS as STATIC_SECTIONS, type Module, type Lesson } from "@/lib/course-data";
-import { loadModules, buildSections } from "@/lib/course-loader";
+import { loadModules, buildSections, loadCourseBySlug, hasFullAccess } from "@/lib/course-loader";
+import type { Course, UserCourseAccess } from "@/lib/types";
 import QuizSystem from "./QuizSystem";
 
 type Page = "login" | "signup" | "dashboard" | "lesson" | "quiz";
 type User = { id: string; email: string; full_name: string } | null;
 
-export default function CourseApp() {
+interface CourseAppProps {
+  courseSlug?: string; // e.g. "ai-mastery" — if omitted, falls back to AI Mastery (legacy behavior)
+}
+
+export default function CourseApp({ courseSlug }: CourseAppProps) {
   const [page, setPage] = useState<Page>("login");
   const [user, setUser] = useState<User>(null);
-  const [userTier, setUserTier] = useState<"free" | "premium">("free");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isInternal, setIsInternal] = useState(false);
   const [currentModule, setCurrentModule] = useState<Module | null>(null);
   const [currentLesson, setCurrentLesson] = useState<Lesson | null>(null);
   const [completedModules, setCompletedModules] = useState<number[]>([]);
   const [completedLessons, setCompletedLessons] = useState<string[]>([]);
   const [allModules, setAllModules] = useState<Module[]>(STATIC_MODULES);
   const [allSections, setAllSections] = useState(STATIC_SECTIONS);
+
+  // Course-specific state
+  const [course, setCourse] = useState<Course | null>(null);
+  const [courseAccess, setCourseAccess] = useState<UserCourseAccess | undefined>(undefined);
+  const [hasAccess, setHasAccess] = useState(false);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -54,17 +64,48 @@ export default function CourseApp() {
 
     if (!profile) {
       await supabase.from("profiles").insert({ id: userId, email, full_name: fullName || email.split("@")[0] });
-      profile = { id: userId, email, full_name: fullName || email.split("@")[0], tier: "free" };
+      profile = { id: userId, email, full_name: fullName || email.split("@")[0], tier: "free", is_internal: false };
     }
 
     setUser({ id: userId, email, full_name: profile.full_name || "" });
-    setUserTier(profile.tier || "free");
     setIsAdmin(profile.is_admin || false);
+    setIsInternal(profile.is_internal || false);
 
-    // Load course content from database (falls back to static)
-    const modules = await loadModules();
-    setAllModules(modules);
-    setAllSections(buildSections(modules));
+    // Load course data
+    let loadedCourse: Course | null = null;
+    if (courseSlug) {
+      loadedCourse = await loadCourseBySlug(courseSlug);
+    }
+
+    if (loadedCourse) {
+      setCourse(loadedCourse);
+
+      // Check course access
+      const access = await getUserCourseAccess(userId, loadedCourse.id);
+      setCourseAccess(access || undefined);
+
+      const fullAccess = hasFullAccess(loadedCourse, access || undefined, profile.is_internal || false);
+      setHasAccess(fullAccess);
+
+      // If free course, auto-enroll
+      if (loadedCourse.price === 0 && !access) {
+        await enrollInFreeCourse(userId, loadedCourse.id);
+        setCourseAccess({ id: 0, user_id: userId, course_id: loadedCourse.id, access_type: "free" });
+        setHasAccess(true);
+      }
+
+      // Load modules for this course
+      const modules = await loadModules(loadedCourse.id);
+      setAllModules(modules);
+      setAllSections(buildSections(modules));
+    } else {
+      // Legacy behavior: load all modules (AI Mastery fallback)
+      const modules = await loadModules();
+      setAllModules(modules);
+      setAllSections(buildSections(modules));
+      // Legacy: use tier-based access
+      setHasAccess(profile.tier === "premium");
+    }
 
     // Load progress
     const { data: completions } = await supabase.from("module_completions").select("module_id").eq("user_id", userId);
@@ -119,7 +160,12 @@ export default function CourseApp() {
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id, userEmail: user.email }),
+        body: JSON.stringify({
+          userId: user.id,
+          userEmail: user.email,
+          courseId: course?.id,
+          courseSlug: course?.slug,
+        }),
       });
       const { url } = await res.json();
       if (url) window.location.href = url;
@@ -128,12 +174,20 @@ export default function CourseApp() {
     }
   }
 
+  // Format price from cents
+  function formatPrice(cents: number): string {
+    return `$${(cents / 100).toFixed(0)}`;
+  }
+
+  const courseTitle = course?.title || "AI Mastery for Real Estate";
+  const coursePrice = course?.price ?? 19700;
+
   if (loading) {
     return (
       <div className="min-h-screen bg-cream flex items-center justify-center">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-navy border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-500">Loading...</p>
+          <p className="text-gray-500">Loading {courseTitle}...</p>
         </div>
       </div>
     );
@@ -150,6 +204,9 @@ export default function CourseApp() {
               <span>AgentIQ</span> <span className="text-terra">Hub</span>
             </h1>
             <p className="text-gray-500 mt-2">{isSignup ? "Create your account" : "Welcome back"}</p>
+            {course && (
+              <p className="text-sm text-accent mt-1">{courseTitle}</p>
+            )}
           </div>
 
           {authError && (
@@ -295,9 +352,20 @@ export default function CourseApp() {
   }
 
   // ===== DASHBOARD =====
-  const freeModuleCount = allModules.filter(m => m.tier === "free").length;
-  const totalModules = userTier === "premium" ? allModules.length : freeModuleCount;
-  const accessibleModuleIds = userTier === "premium" ? allModules.map(m => m.id) : allModules.filter(m => m.tier === "free").map(m => m.id);
+  // Access logic: if course loaded, use hasAccess state; if legacy, check tier
+  const isModuleLocked = (mod: Module): boolean => {
+    if (hasAccess) return false; // Full access to all modules
+    if (course) {
+      // Paid course without access — all modules locked
+      return course.price > 0;
+    }
+    // Legacy tier-based: premium modules locked for free users
+    return mod.tier === "premium";
+  };
+
+  const accessibleModules = allModules.filter(m => !isModuleLocked(m));
+  const totalModules = hasAccess ? allModules.length : accessibleModules.length;
+  const accessibleModuleIds = hasAccess ? allModules.map(m => m.id) : accessibleModules.map(m => m.id);
   const progress = totalModules > 0 ? Math.round((completedModules.filter(id => accessibleModuleIds.includes(id)).length / totalModules) * 100) : 0;
 
   return (
@@ -305,14 +373,22 @@ export default function CourseApp() {
       {/* Header */}
       <div className="bg-white border-b">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xl font-display font-bold text-navy">AgentIQ</span>
-            <span className="text-xl font-display text-terra">Hub</span>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xl font-display font-bold text-navy">AgentIQ</span>
+              <span className="text-xl font-display text-terra">Hub</span>
+            </div>
+            {course && (
+              <>
+                <span className="text-gray-300">|</span>
+                <a href="/courses" className="text-sm text-accent hover:underline">← All Courses</a>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-500">Welcome, {user?.full_name || user?.email}</span>
-            {userTier === "premium" && (
-              <span className="bg-gold text-white text-xs font-bold px-3 py-1 rounded-full">PREMIUM</span>
+            {hasAccess && coursePrice > 0 && (
+              <span className="bg-gold text-white text-xs font-bold px-3 py-1 rounded-full">ENROLLED</span>
             )}
             {isAdmin && (
               <a href="/admin" className="bg-terra text-white text-xs font-bold px-3 py-1 rounded-full hover:bg-terra-dark transition-colors">ADMIN</a>
@@ -323,6 +399,16 @@ export default function CourseApp() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8">
+        {/* Course Title */}
+        {course && (
+          <div className="mb-6">
+            <h1 className="text-2xl font-display font-bold text-navy">{courseTitle}</h1>
+            {course.short_description && (
+              <p className="text-gray-500 mt-1">{course.short_description}</p>
+            )}
+          </div>
+        )}
+
         {/* Progress */}
         <div className="bg-white rounded-2xl p-6 mb-8 shadow-sm">
           <div className="flex items-center justify-between mb-4">
@@ -334,15 +420,15 @@ export default function CourseApp() {
           </div>
         </div>
 
-        {/* Upgrade Banner */}
-        {userTier === "free" && (
+        {/* Upgrade Banner — show when course is paid and user doesn't have access */}
+        {!hasAccess && coursePrice > 0 && (
           <div className="bg-navy rounded-2xl p-6 mb-8 text-white flex flex-col md:flex-row items-center justify-between gap-4">
             <div>
               <h3 className="font-display font-bold text-xl mb-1">Unlock All {allModules.length} Modules + Certification</h3>
-              <p className="text-white/70">Get advanced AI workflows, business systems, and your professional certificate.</p>
+              <p className="text-white/70">Get full access to {courseTitle} with all lessons, quizzes, and your professional certificate.</p>
             </div>
             <button onClick={handleUpgrade} className="bg-terra px-8 py-3 rounded-xl font-semibold hover:bg-terra-dark transition-colors whitespace-nowrap">
-              Upgrade — $197
+              Purchase — {formatPrice(coursePrice)}
             </button>
           </div>
         )}
@@ -352,34 +438,37 @@ export default function CourseApp() {
           <div key={sec.name} className="mb-8">
             <div className="flex items-center gap-3 mb-4">
               <h3 className="text-lg font-display font-bold text-navy">{sec.name}</h3>
-              <span className={`text-xs font-semibold px-3 py-1 rounded-full ${sec.tier === "premium" ? "bg-gold/10 text-gold" : "bg-accent/10 text-accent"}`}>
-                {sec.tier === "premium" ? "PREMIUM" : "FREE"}
-              </span>
+              {!hasAccess && coursePrice > 0 && (
+                <span className={`text-xs font-semibold px-3 py-1 rounded-full ${sec.tier === "premium" ? "bg-gold/10 text-gold" : "bg-accent/10 text-accent"}`}>
+                  {sec.tier === "premium" ? "PREMIUM" : "FREE"}
+                </span>
+              )}
             </div>
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
               {sec.modules.map(modId => {
                 const mod = allModules.find(m => m.id === modId)!;
-                const isLocked = mod.tier === "premium" && userTier === "free";
+                if (!mod) return null;
+                const locked = isModuleLocked(mod);
                 const isComplete = completedModules.includes(mod.id);
 
                 return (
                   <div
                     key={mod.id}
                     onClick={() => {
-                      if (isLocked) return;
+                      if (locked) return;
                       setCurrentModule(mod);
                       setCurrentLesson(mod.lessons[0]);
                       setPage("lesson");
                     }}
                     className={`bg-white rounded-xl p-5 border-2 transition-all ${
-                      isLocked ? "border-gray-100 opacity-60 cursor-not-allowed" :
+                      locked ? "border-gray-100 opacity-60 cursor-not-allowed" :
                       isComplete ? "border-sage cursor-pointer hover:shadow-md" :
                       "border-gray-100 cursor-pointer hover:border-accent hover:shadow-md"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-xs font-semibold text-gray-400">Module {mod.id}</span>
-                      {isLocked && <span className="text-gray-400">🔒</span>}
+                      {locked && <span className="text-gray-400">🔒</span>}
                       {isComplete && <span className="text-sage">✓</span>}
                     </div>
                     <h4 className="font-semibold text-navy text-sm mb-2">{mod.title}</h4>

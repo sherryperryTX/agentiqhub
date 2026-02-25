@@ -37,15 +37,32 @@ export async function POST(req: Request) {
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
     const userId = session.metadata?.userId;
+    const courseId = session.metadata?.courseId ? parseInt(session.metadata.courseId) : 1;
 
     if (userId) {
-      const { error } = await supabaseAdmin
-        .from("profiles")
-        .update({ tier: "premium", stripe_customer_id: session.customer as string })
-        .eq("id", userId);
+      // Grant course access
+      const { error: accessError } = await supabaseAdmin
+        .from("user_courses")
+        .upsert(
+          {
+            user_id: userId,
+            course_id: courseId,
+            access_type: "purchased",
+            stripe_session_id: session.id,
+          },
+          { onConflict: "user_id,course_id" }
+        );
 
-      if (error) console.error("Error upgrading user:", error);
-      else console.log(`User ${userId} upgraded to premium`);
+      if (accessError) console.error("Error granting course access:", accessError);
+      else console.log(`User ${userId} purchased course ${courseId}`);
+
+      // Backward compat: also update profiles.tier for AI Mastery (course 1)
+      if (courseId === 1) {
+        await supabaseAdmin
+          .from("profiles")
+          .update({ tier: "premium", stripe_customer_id: session.customer as string })
+          .eq("id", userId);
+      }
     }
   }
 

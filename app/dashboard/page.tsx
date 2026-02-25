@@ -1,5 +1,5 @@
-import CourseApp from "@/components/CourseApp";
+import { redirect } from "next/navigation";
 
 export default function Dashboard() {
-  return <CourseApp />;
+  redirect("/courses");
 }

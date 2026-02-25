@@ -45,3 +45,25 @@ export async function issueCertificate(userId: string, score: number) {
   if (error) console.error("Error issuing certificate:", error);
   return data;
 }
+
+// ===== Course Access Helpers =====
+
+export async function enrollInFreeCourse(userId: string, courseId: number) {
+  const { error } = await supabase
+    .from("user_courses")
+    .upsert(
+      { user_id: userId, course_id: courseId, access_type: "free" },
+      { onConflict: "user_id,course_id" }
+    );
+  if (error) console.error("Error enrolling in course:", error);
+}
+
+export async function getUserCourseAccess(userId: string, courseId: number) {
+  const { data } = await supabase
+    .from("user_courses")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("course_id", courseId)
+    .single();
+  return data;
+}
