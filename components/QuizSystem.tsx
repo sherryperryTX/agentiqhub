@@ -31,7 +31,7 @@ export default function QuizSystem({ moduleId, moduleName, questions, onComplete
   }
 
   if (submitted) {
-    const correct = answers.reduce((acc, ans, i) => acc + (ans === questions[i].correct ? 1 : 0), 0);
+    const correct = answers.reduce((acc: number, ans, i) => acc + (ans === questions[i].correct ? 1 : 0), 0);
     const score = Math.round((correct / questions.length) * 100);
     const passed = score >= 70;
 
