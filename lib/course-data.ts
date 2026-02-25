@@ -3,6 +3,8 @@ export interface Lesson {
   title: string;
   content: string;
   videoUrl?: string;
+  handoutUrl?: string;
+  handoutName?: string;
 }
 
 export interface QuizQuestion {

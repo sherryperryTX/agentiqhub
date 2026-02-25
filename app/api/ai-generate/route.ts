@@ -149,6 +149,51 @@ Generate a JSON object:
 }`;
         break;
 
+      case "generate_from_document":
+        userPrompt = `You are creating training content for a real estate AI mastery course. A document has been provided. Your job is to transform this document into a structured training module with lessons and quizzes.
+
+DOCUMENT CONTENT:
+---
+${context.documentContent?.substring(0, 8000) || "No content provided"}
+---
+
+${context.instructions ? `ADDITIONAL INSTRUCTIONS: ${context.instructions}` : ""}
+${context.moduleName ? `MODULE NAME: ${context.moduleName}` : ""}
+
+Create a complete training module based on this document. Organize the content into clear, digestible lessons that teach realtors practical skills. Add AI prompts they can copy and use.
+
+Generate a JSON object with this exact structure:
+{
+  "title": "${context.moduleName || 'Module title based on the document'}",
+  "section": "${context.section || 'Custom Training'}",
+  "description": "1-2 sentence module description",
+  "tier": "${context.tier || 'premium'}",
+  "lessons": [
+    {
+      "title": "Lesson 1 title",
+      "content": "Full lesson content with **bold** formatting. Incorporate key information from the document. Add practical AI prompts realtors can use. At least 3 substantial paragraphs."
+    },
+    {
+      "title": "Lesson 2 title",
+      "content": "Full lesson content..."
+    },
+    {
+      "title": "Lesson 3 title",
+      "content": "Full lesson content..."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Question text?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correct": 0
+    }
+  ]
+}
+
+Generate exactly 3 lessons and 5 quiz questions. Make the content practical, engaging, and focused on real estate applications.`;
+        break;
+
       case "chat":
         userPrompt = context.message;
         systemPrompt += `\n\nYou are having a conversation with the course administrator. Help them plan content, answer questions about course structure, suggest new module ideas, or assist with any course-related task. Be conversational and helpful. If they ask you to generate specific content (modules, lessons, quizzes), let them know they can use the dedicated generation buttons for structured output.`;

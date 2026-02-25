@@ -44,6 +44,8 @@ export async function loadModules(): Promise<Module[]> {
           title: l.title,
           content: l.content,
           videoUrl: l.video_url || undefined,
+          handoutUrl: l.handout_url || undefined,
+          handoutName: l.handout_name || undefined,
         })),
       quiz: dbQuizzes
         .filter(q => q.module_id === mod.id)

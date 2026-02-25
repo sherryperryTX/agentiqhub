@@ -248,6 +248,27 @@ export default function CourseApp() {
             ))}
           </div>
 
+          {/* Handout download */}
+          {currentLesson.handoutUrl && (
+            <div className="bg-white rounded-xl p-5 shadow-sm mb-8 flex items-center justify-between border-2 border-accent/20">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">&#128196;</span>
+                <div>
+                  <div className="font-semibold text-navy text-sm">{currentLesson.handoutName || "Lesson Handout"}</div>
+                  <div className="text-xs text-gray-400">Downloadable resource for this lesson</div>
+                </div>
+              </div>
+              <a
+                href={currentLesson.handoutUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bg-accent text-white text-sm font-semibold px-5 py-2 rounded-lg hover:bg-accent/90 transition-colors"
+              >
+                Download
+              </a>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             {prevLesson ? (
               <button onClick={() => setCurrentLesson(prevLesson)} className="text-accent hover:underline">← {prevLesson.title}</button>

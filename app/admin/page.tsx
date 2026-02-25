@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 type Profile = { id: string; email: string; full_name: string; tier: "free" | "premium"; is_admin: boolean; created_at: string };
 type ModuleCompletion = { user_id: string; module_id: number };
 type DBModule = { id: number; title: string; section: string; description: string; tier: string; sort_order: number };
-type DBLesson = { id: string; module_id: number; title: string; content: string; video_url: string | null; sort_order: number };
+type DBLesson = { id: string; module_id: number; title: string; content: string; video_url: string | null; handout_url: string | null; handout_name: string | null; sort_order: number };
 type DBQuiz = { id: number; module_id: number; question: string; options: string[]; correct_index: number; sort_order: number };
 type ChatMessage = { role: "user" | "assistant"; content: string };
 type Tab = "users" | "content" | "ai";
@@ -38,7 +38,7 @@ export default function AdminDashboard() {
   // New module form
   const [newModule, setNewModule] = useState({ title: "", section: "", description: "", tier: "premium" });
   // New lesson form
-  const [newLesson, setNewLesson] = useState({ title: "", content: "", video_url: "" });
+  const [newLesson, setNewLesson] = useState({ title: "", content: "", video_url: "", handout_url: "", handout_name: "" });
   // New quiz form
   const [newQuiz, setNewQuiz] = useState({ question: "", options: ["", "", "", ""], correct_index: 0 });
 
@@ -50,6 +50,13 @@ export default function AdminDashboard() {
   const [generateTopic, setGenerateTopic] = useState("");
   const [generateTier, setGenerateTier] = useState("premium");
   const [generateSection, setGenerateSection] = useState("");
+  // Document upload
+  const [docContent, setDocContent] = useState("");
+  const [docModuleName, setDocModuleName] = useState("");
+  const [docSection, setDocSection] = useState("");
+  const [docTier, setDocTier] = useState("premium");
+  const [docInstructions, setDocInstructions] = useState("");
+  const [docFileName, setDocFileName] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { checkAdminAndLoad(); }, []);
@@ -258,6 +265,82 @@ export default function AdminDashboard() {
     setAiGenerating(null);
   }
 
+  // ===== Document Upload =====
+  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDocFileName(file.name);
+    // Auto-fill module name from file name
+    if (!docModuleName) {
+      const nameWithoutExt = file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ");
+      setDocModuleName(nameWithoutExt);
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      setDocContent(text || "");
+    };
+    reader.readAsText(file);
+  }
+
+  async function aiGenerateFromDocument() {
+    if (!docContent.trim()) { alert("Please upload a document or paste content first."); return; }
+    setAiGenerating("document");
+    try {
+      const result = await callAI("generate_from_document", {
+        documentContent: docContent,
+        moduleName: docModuleName,
+        section: docSection,
+        tier: docTier,
+        instructions: docInstructions,
+      });
+      if (result.parsed) {
+        const mod = result.parsed;
+        const nextOrder = modules.length > 0 ? Math.max(...modules.map(m => m.sort_order)) + 1 : 1;
+        const { data: newMod, error: modErr } = await supabase.from("course_modules")
+          .insert({ title: mod.title, section: mod.section || docSection || "Custom Training", description: mod.description, tier: mod.tier || docTier, sort_order: nextOrder })
+          .select().single();
+
+        if (modErr || !newMod) throw new Error(modErr?.message || "Failed to save module");
+
+        for (let i = 0; i < mod.lessons.length; i++) {
+          const l = mod.lessons[i];
+          await supabase.from("course_lessons").insert({
+            id: `${newMod.id}-${i + 1}`,
+            module_id: newMod.id,
+            title: l.title,
+            content: l.content,
+            sort_order: i + 1,
+          });
+        }
+
+        for (let i = 0; i < mod.quiz.length; i++) {
+          const q = mod.quiz[i];
+          await supabase.from("course_quizzes").insert({
+            module_id: newMod.id,
+            question: q.question,
+            options: q.options,
+            correct_index: q.correct,
+            sort_order: i + 1,
+          });
+        }
+
+        await refreshContent();
+        setChatMessages(prev => [...prev, {
+          role: "assistant",
+          content: `I created a new module from your document: **${mod.title}**\n\nIt has ${mod.lessons.length} lessons and ${mod.quiz.length} quiz questions. Check the Content tab to review and edit.`
+        }]);
+        // Reset form
+        setDocContent(""); setDocModuleName(""); setDocInstructions(""); setDocFileName("");
+      } else {
+        setChatMessages(prev => [...prev, { role: "assistant", content: result.text }]);
+      }
+    } catch (err: any) {
+      setChatMessages(prev => [...prev, { role: "assistant", content: `Error: ${err.message}` }]);
+    }
+    setAiGenerating(null);
+  }
+
   // ===== CRUD Functions =====
   async function refreshContent() {
     const [modulesRes, lessonsRes, quizzesRes] = await Promise.all([
@@ -306,17 +389,19 @@ export default function AdminDashboard() {
       title: newLesson.title,
       content: newLesson.content,
       video_url: newLesson.video_url || null,
+      handout_url: newLesson.handout_url || null,
+      handout_name: newLesson.handout_name || null,
       sort_order: nextOrder,
     });
     await refreshContent();
-    setNewLesson({ title: "", content: "", video_url: "" });
+    setNewLesson({ title: "", content: "", video_url: "", handout_url: "", handout_name: "" });
     setShowNewLesson(false);
     setSaving(false);
   }
 
   async function updateLesson(lesson: DBLesson) {
     setSaving(true);
-    await supabase.from("course_lessons").update({ title: lesson.title, content: lesson.content, video_url: lesson.video_url }).eq("id", lesson.id);
+    await supabase.from("course_lessons").update({ title: lesson.title, content: lesson.content, video_url: lesson.video_url, handout_url: lesson.handout_url, handout_name: lesson.handout_name }).eq("id", lesson.id);
     await refreshContent();
     setEditingLesson(null);
     setSaving(false);
@@ -544,7 +629,9 @@ export default function AdminDashboard() {
                       <div className="bg-accent/5 rounded-xl p-4 mb-4">
                         <input placeholder="Lesson title" value={newLesson.title} onChange={e => setNewLesson({ ...newLesson, title: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-2" />
                         <textarea placeholder="Lesson content (supports **bold** formatting)" value={newLesson.content} onChange={e => setNewLesson({ ...newLesson, content: e.target.value })} rows={6} className="w-full px-3 py-2 border rounded-lg text-sm mb-2 font-mono" />
-                        <input placeholder="Video URL (optional)" value={newLesson.video_url} onChange={e => setNewLesson({ ...newLesson, video_url: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-3" />
+                        <input placeholder="Video URL (optional)" value={newLesson.video_url} onChange={e => setNewLesson({ ...newLesson, video_url: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-2" />
+                        <input placeholder="Handout URL (optional - link to PDF/doc)" value={newLesson.handout_url} onChange={e => setNewLesson({ ...newLesson, handout_url: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-2" />
+                        <input placeholder="Handout display name (e.g., 'Prompt Templates Cheat Sheet')" value={newLesson.handout_name} onChange={e => setNewLesson({ ...newLesson, handout_name: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-3" />
                         <div className="flex gap-2">
                           <button onClick={saveNewLesson} disabled={saving} className="bg-accent text-white text-xs px-4 py-2 rounded-lg">{saving ? "Saving..." : "Save Lesson"}</button>
                           <button onClick={() => setShowNewLesson(false)} className="text-gray-500 text-xs px-3 py-2">Cancel</button>
@@ -558,7 +645,9 @@ export default function AdminDashboard() {
                           <div className="p-4">
                             <input value={editingLesson.title} onChange={e => setEditingLesson({ ...editingLesson, title: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm font-semibold mb-2" />
                             <textarea value={editingLesson.content} onChange={e => setEditingLesson({ ...editingLesson, content: e.target.value })} rows={10} className="w-full px-3 py-2 border rounded-lg text-sm mb-2 font-mono" />
-                            <input placeholder="Video URL (optional)" value={editingLesson.video_url || ""} onChange={e => setEditingLesson({ ...editingLesson, video_url: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-3" />
+                            <input placeholder="Video URL (optional)" value={editingLesson.video_url || ""} onChange={e => setEditingLesson({ ...editingLesson, video_url: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-2" />
+                            <input placeholder="Handout URL (link to PDF/doc)" value={editingLesson.handout_url || ""} onChange={e => setEditingLesson({ ...editingLesson, handout_url: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-2" />
+                            <input placeholder="Handout display name" value={editingLesson.handout_name || ""} onChange={e => setEditingLesson({ ...editingLesson, handout_name: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-3" />
                             <div className="flex gap-2">
                               <button onClick={() => updateLesson(editingLesson)} disabled={saving} className="bg-accent text-white text-xs px-4 py-2 rounded-lg">{saving ? "Saving..." : "Save"}</button>
                               <button onClick={() => setEditingLesson(null)} className="text-gray-500 text-xs px-3 py-2">Cancel</button>
@@ -570,6 +659,7 @@ export default function AdminDashboard() {
                               <div className="text-sm font-semibold text-navy">{lesson.title}</div>
                               <div className="text-xs text-gray-400 mt-1">{lesson.content.substring(0, 120)}...</div>
                               {lesson.video_url && <div className="text-xs text-accent mt-1">&#127909; Video linked</div>}
+                              {lesson.handout_url && <div className="text-xs text-terra mt-1">&#128206; Handout: {lesson.handout_name || "Download"}</div>}
                             </div>
                             <div className="flex gap-1 flex-shrink-0 ml-4">
                               <button onClick={() => aiImproveLesson(lesson)} disabled={aiGenerating !== null} className="text-purple-500 text-xs px-2 py-1 rounded hover:bg-purple-50 disabled:opacity-50" title="AI Improve">&#9733;</button>
@@ -713,6 +803,66 @@ export default function AdminDashboard() {
                   {aiGenerating === "module" ? "Generating Module..." : "Generate Complete Module"}
                 </button>
                 <p className="text-xs text-gray-400 mt-2 text-center">Creates 3 lessons + 5 quiz questions</p>
+              </div>
+
+              {/* Create from Document */}
+              <div className="bg-white rounded-2xl shadow-sm p-6 mb-6">
+                <h3 className="font-display font-bold text-navy mb-4">&#128196; Create from Document</h3>
+                <p className="text-xs text-gray-400 mb-3">Upload a file or paste content and AI will create a complete training module from it.</p>
+
+                <div className="mb-3">
+                  <label className="text-xs font-semibold text-gray-500 mb-1 block">Upload File</label>
+                  <input
+                    type="file"
+                    accept=".txt,.md,.csv,.doc,.docx,.rtf"
+                    onChange={handleFileUpload}
+                    className="w-full text-sm text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-accent/10 file:text-accent hover:file:bg-accent/20"
+                  />
+                  {docFileName && <div className="text-xs text-accent mt-1">Loaded: {docFileName}</div>}
+                </div>
+
+                <div className="mb-3">
+                  <label className="text-xs font-semibold text-gray-500 mb-1 block">Or Paste Content</label>
+                  <textarea
+                    value={docContent}
+                    onChange={e => setDocContent(e.target.value)}
+                    placeholder="Paste document content here... (from Word, PDF, web page, etc.)"
+                    rows={5}
+                    className="w-full px-3 py-2 border rounded-lg text-sm resize-none"
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label className="text-xs font-semibold text-gray-500 mb-1 block">Module Name</label>
+                  <input value={docModuleName} onChange={e => setDocModuleName(e.target.value)} placeholder="e.g., AI for Buyer Consultations" className="w-full px-3 py-2 border rounded-lg text-sm" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 mb-1 block">Section</label>
+                    <input value={docSection} onChange={e => setDocSection(e.target.value)} placeholder="Section name" className="w-full px-3 py-2 border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 mb-1 block">Tier</label>
+                    <select value={docTier} onChange={e => setDocTier(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm">
+                      <option value="free">Free</option>
+                      <option value="premium">Premium</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <label className="text-xs font-semibold text-gray-500 mb-1 block">Special Instructions (optional)</label>
+                  <input value={docInstructions} onChange={e => setDocInstructions(e.target.value)} placeholder="e.g., Focus on first-time buyers" className="w-full px-3 py-2 border rounded-lg text-sm" />
+                </div>
+
+                <button
+                  onClick={aiGenerateFromDocument}
+                  disabled={aiGenerating !== null || !docContent.trim()}
+                  className="w-full bg-terra text-white font-semibold py-2.5 rounded-xl hover:bg-terra/90 transition-colors disabled:opacity-50"
+                >
+                  {aiGenerating === "document" ? "Creating Module from Document..." : "Create Module from Document"}
+                </button>
               </div>
 
               <div className="bg-white rounded-2xl shadow-sm p-6">
