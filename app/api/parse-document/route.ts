@@ -42,7 +42,7 @@ export async function POST(req: Request) {
 
     if (fileName.endsWith(".pdf")) {
       // Parse PDF
-      const pdfParse = (await import("pdf-parse")).default;
+      const pdfParse = require("pdf-parse");
       const pdfData = await pdfParse(buffer);
       text = pdfData.text;
     } else if (fileName.endsWith(".docx") || fileName.endsWith(".doc")) {
