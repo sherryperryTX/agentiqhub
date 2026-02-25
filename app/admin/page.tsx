@@ -89,7 +89,10 @@ export default function AdminDashboard() {
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authToken}` },
       body: JSON.stringify({ action, context }),
     });
-    if (!res.ok) throw new Error("AI request failed");
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(errorData.error || `AI request failed (${res.status})`);
+    }
     return res.json();
   }
 

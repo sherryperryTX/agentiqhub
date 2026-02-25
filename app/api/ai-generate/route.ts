@@ -166,7 +166,7 @@ Generate a JSON object:
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5-20250929",
         max_tokens: 4096,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
@@ -175,8 +175,8 @@ Generate a JSON object:
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Anthropic API error:", errorText);
-      return NextResponse.json({ error: "AI generation failed" }, { status: 500 });
+      console.error("Anthropic API error:", response.status, errorText);
+      return NextResponse.json({ error: `AI error (${response.status}): ${errorText.substring(0, 200)}` }, { status: 500 });
     }
 
     const result = await response.json();
