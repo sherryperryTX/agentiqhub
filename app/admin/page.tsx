@@ -107,10 +107,12 @@ export default function AdminDashboard() {
     if (!chatInput.trim()) return;
     const userMsg = chatInput.trim();
     setChatInput("");
-    setChatMessages(prev => [...prev, { role: "user", content: userMsg }]);
+    const updatedMessages = [...chatMessages, { role: "user" as const, content: userMsg }];
+    setChatMessages(updatedMessages);
     setAiLoading(true);
     try {
-      const result = await callAI("chat", { message: userMsg });
+      // Send full conversation history so AI has context of the planning discussion
+      const result = await callAI("chat", { message: userMsg, history: chatMessages });
       setChatMessages(prev => [...prev, { role: "assistant", content: result.text }]);
     } catch {
       setChatMessages(prev => [...prev, { role: "assistant", content: "Sorry, I encountered an error. Please check that the Anthropic API key is configured in Vercel." }]);
@@ -451,6 +453,18 @@ export default function AdminDashboard() {
     const newTier = currentTier === "premium" ? "free" : "premium";
     await supabase.from("profiles").update({ tier: newTier }).eq("id", userId);
     setProfiles(profiles.map(p => p.id === userId ? { ...p, tier: newTier as "free" | "premium" } : p));
+    setUpdatingUser(null);
+  }
+
+  async function toggleAdmin(userId: string, currentIsAdmin: boolean) {
+    if (currentIsAdmin) {
+      if (!confirm("Remove admin privileges from this user? They will no longer be able to access the admin dashboard.")) return;
+    } else {
+      if (!confirm("Grant admin privileges to this user? They will be able to manage all course content and users.")) return;
+    }
+    setUpdatingUser(userId);
+    await supabase.from("profiles").update({ is_admin: !currentIsAdmin }).eq("id", userId);
+    setProfiles(profiles.map(p => p.id === userId ? { ...p, is_admin: !currentIsAdmin } : p));
     setUpdatingUser(null);
   }
 
@@ -965,7 +979,7 @@ export default function AdminDashboard() {
         {activeTab === "users" && (
           <div>
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
               <div className="bg-white rounded-2xl p-6 shadow-sm">
                 <div className="text-3xl font-bold text-navy mb-1">{profiles.length}</div>
                 <div className="text-sm text-gray-500">Total Users</div>
@@ -977,6 +991,10 @@ export default function AdminDashboard() {
               <div className="bg-white rounded-2xl p-6 shadow-sm">
                 <div className="text-3xl font-bold text-accent mb-1">{profiles.length - profiles.filter(p => p.tier === "premium").length}</div>
                 <div className="text-sm text-gray-500">Free Users</div>
+              </div>
+              <div className="bg-white rounded-2xl p-6 shadow-sm">
+                <div className="text-3xl font-bold text-terra mb-1">{profiles.filter(p => p.is_admin).length}</div>
+                <div className="text-sm text-gray-500">Admins</div>
               </div>
             </div>
 
@@ -993,6 +1011,7 @@ export default function AdminDashboard() {
                   <thead>
                     <tr className="bg-gray-50 text-left">
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
+                      <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Tier</th>
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Modules Done</th>
                       <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Joined</th>
@@ -1007,6 +1026,11 @@ export default function AdminDashboard() {
                           <div className="text-xs text-gray-400">{profile.email}</div>
                         </td>
                         <td className="px-6 py-4">
+                          <span className={`text-xs font-bold px-3 py-1 rounded-full ${profile.is_admin ? "bg-terra/10 text-terra" : "bg-gray-100 text-gray-500"}`}>
+                            {profile.is_admin ? "ADMIN" : "USER"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
                           <span className={`text-xs font-bold px-3 py-1 rounded-full ${profile.tier === "premium" ? "bg-gold/10 text-gold" : "bg-gray-100 text-gray-500"}`}>
                             {profile.tier?.toUpperCase() || "FREE"}
                           </span>
@@ -1014,15 +1038,26 @@ export default function AdminDashboard() {
                         <td className="px-6 py-4"><span className="text-sm text-gray-700">{getUserCompletions(profile.id)} / {modules.length}</span></td>
                         <td className="px-6 py-4"><span className="text-sm text-gray-500">{profile.created_at ? new Date(profile.created_at).toLocaleDateString() : "\u2014"}</span></td>
                         <td className="px-6 py-4">
-                          <button
-                            onClick={() => toggleTier(profile.id, profile.tier)}
-                            disabled={updatingUser === profile.id}
-                            className={`text-xs font-semibold px-4 py-2 rounded-lg transition-colors ${
-                              profile.tier === "premium" ? "bg-red-50 text-red-600 hover:bg-red-100" : "bg-green-50 text-green-600 hover:bg-green-100"
-                            } ${updatingUser === profile.id ? "opacity-50 cursor-wait" : ""}`}
-                          >
-                            {updatingUser === profile.id ? "Updating..." : profile.tier === "premium" ? "Downgrade to Free" : "Upgrade to Premium"}
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => toggleTier(profile.id, profile.tier)}
+                              disabled={updatingUser === profile.id}
+                              className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                                profile.tier === "premium" ? "bg-red-50 text-red-600 hover:bg-red-100" : "bg-green-50 text-green-600 hover:bg-green-100"
+                              } ${updatingUser === profile.id ? "opacity-50 cursor-wait" : ""}`}
+                            >
+                              {updatingUser === profile.id ? "..." : profile.tier === "premium" ? "Downgrade" : "Upgrade"}
+                            </button>
+                            <button
+                              onClick={() => toggleAdmin(profile.id, profile.is_admin)}
+                              disabled={updatingUser === profile.id}
+                              className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                                profile.is_admin ? "bg-orange-50 text-orange-600 hover:bg-orange-100" : "bg-purple-50 text-purple-600 hover:bg-purple-100"
+                              } ${updatingUser === profile.id ? "opacity-50 cursor-wait" : ""}`}
+                            >
+                              {updatingUser === profile.id ? "..." : profile.is_admin ? "Remove Admin" : "Make Admin"}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

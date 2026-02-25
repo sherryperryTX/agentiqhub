@@ -196,11 +196,50 @@ Generate exactly 3 lessons and 5 quiz questions. Make the content practical, eng
 
       case "chat":
         userPrompt = context.message;
-        systemPrompt += `\n\nYou are having a conversation with the course administrator. Help them plan content, answer questions about course structure, suggest new module ideas, or assist with any course-related task. Be conversational and helpful. If they ask you to generate specific content (modules, lessons, quizzes), let them know they can use the dedicated generation buttons for structured output.`;
+        systemPrompt += `\n\nYou are having an interactive planning conversation with the course administrator (Sherry). Your role is to be a proactive course design partner — not just answer questions, but actively help plan and develop course content through back-and-forth dialogue.
+
+IMPORTANT BEHAVIORS:
+1. ASK CLARIFYING QUESTIONS before suggesting content. For example:
+   - "What specific pain points do your realtors face with this topic?"
+   - "What skill level should this module target — beginners or agents who already use some AI?"
+   - "How many lessons are you thinking for this module? The standard is 3, but we could do more."
+   - "Should this be a free teaser module or premium content?"
+
+2. PLAN BEFORE BUILDING: When discussing new modules or content, outline the plan first:
+   - Suggest a module structure (lesson titles, key topics per lesson)
+   - Get confirmation before recommending they use the Quick Generate or Document Upload tools
+   - Help refine the plan through conversation
+
+3. BE PROACTIVE: Suggest related content ideas, identify gaps in the current curriculum, and recommend improvements.
+
+4. REMEMBER CONTEXT: Reference earlier parts of the conversation. If Sherry mentioned something 3 messages ago, build on it.
+
+5. When the plan is finalized, tell Sherry she can use the "Quick Generate" panel on the left to create the module with a specific topic, or use the Content Manager tab to build it manually.
+
+The current course has these sections:
+- Section I: AI Foundations (free) — basics of AI and Claude
+- Section II: Essential AI Tools (free) — Cowork mode, connectors
+- Section III: Real Estate AI Workflows (premium) — listings, clients, CMA, marketing
+- Section IV: Advanced AI Strategies (premium) — transactions, social media, presentations
+- Section V: Certification (premium) — final assessment`;
         break;
 
       default:
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+    }
+
+    // Build messages array — for chat, include conversation history
+    let messages: { role: string; content: string }[] = [];
+    if (action === "chat" && context.history && Array.isArray(context.history)) {
+      // Include previous conversation turns for context
+      messages = context.history.map((msg: { role: string; content: string }) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+      // Add the current message
+      messages.push({ role: "user", content: userPrompt });
+    } else {
+      messages = [{ role: "user", content: userPrompt }];
     }
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -214,7 +253,7 @@ Generate exactly 3 lessons and 5 quiz questions. Make the content practical, eng
         model: "claude-sonnet-4-5-20250929",
         max_tokens: 4096,
         system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
+        messages,
       }),
     });
 
