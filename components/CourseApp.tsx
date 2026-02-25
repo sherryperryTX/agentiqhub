@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { MODULES, SECTIONS, type Module, type Lesson } from "@/lib/course-data";
+import { MODULES as STATIC_MODULES, SECTIONS as STATIC_SECTIONS, type Module, type Lesson } from "@/lib/course-data";
+import { loadModules, buildSections } from "@/lib/course-loader";
 import QuizSystem from "./QuizSystem";
 
 type Page = "login" | "signup" | "dashboard" | "lesson" | "quiz";
@@ -16,6 +17,8 @@ export default function CourseApp() {
   const [currentLesson, setCurrentLesson] = useState<Lesson | null>(null);
   const [completedModules, setCompletedModules] = useState<number[]>([]);
   const [completedLessons, setCompletedLessons] = useState<string[]>([]);
+  const [allModules, setAllModules] = useState<Module[]>(STATIC_MODULES);
+  const [allSections, setAllSections] = useState(STATIC_SECTIONS);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -57,6 +60,11 @@ export default function CourseApp() {
     setUser({ id: userId, email, full_name: profile.full_name || "" });
     setUserTier(profile.tier || "free");
     setIsAdmin(profile.is_admin || false);
+
+    // Load course content from database (falls back to static)
+    const modules = await loadModules();
+    setAllModules(modules);
+    setAllSections(buildSections(modules));
 
     // Load progress
     const { data: completions } = await supabase.from("module_completions").select("module_id").eq("user_id", userId);
@@ -266,8 +274,10 @@ export default function CourseApp() {
   }
 
   // ===== DASHBOARD =====
-  const totalModules = userTier === "premium" ? 17 : 8;
-  const progress = Math.round((completedModules.filter(id => id <= totalModules).length / totalModules) * 100);
+  const freeModuleCount = allModules.filter(m => m.tier === "free").length;
+  const totalModules = userTier === "premium" ? allModules.length : freeModuleCount;
+  const accessibleModuleIds = userTier === "premium" ? allModules.map(m => m.id) : allModules.filter(m => m.tier === "free").map(m => m.id);
+  const progress = totalModules > 0 ? Math.round((completedModules.filter(id => accessibleModuleIds.includes(id)).length / totalModules) * 100) : 0;
 
   return (
     <div className="min-h-screen bg-cream">
@@ -296,7 +306,7 @@ export default function CourseApp() {
         <div className="bg-white rounded-2xl p-6 mb-8 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-display font-bold text-navy">Your Progress</h2>
-            <span className="text-sm text-gray-500">{completedModules.filter(id => id <= totalModules).length} of {totalModules} modules complete</span>
+            <span className="text-sm text-gray-500">{completedModules.filter(id => accessibleModuleIds.includes(id)).length} of {totalModules} modules complete</span>
           </div>
           <div className="bg-gray-100 rounded-full h-4 overflow-hidden">
             <div className="bg-gradient-to-r from-accent to-sage h-full rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
@@ -307,7 +317,7 @@ export default function CourseApp() {
         {userTier === "free" && (
           <div className="bg-navy rounded-2xl p-6 mb-8 text-white flex flex-col md:flex-row items-center justify-between gap-4">
             <div>
-              <h3 className="font-display font-bold text-xl mb-1">Unlock All 17 Modules + Certification</h3>
+              <h3 className="font-display font-bold text-xl mb-1">Unlock All {allModules.length} Modules + Certification</h3>
               <p className="text-white/70">Get advanced AI workflows, business systems, and your professional certificate.</p>
             </div>
             <button onClick={handleUpgrade} className="bg-terra px-8 py-3 rounded-xl font-semibold hover:bg-terra-dark transition-colors whitespace-nowrap">
@@ -317,7 +327,7 @@ export default function CourseApp() {
         )}
 
         {/* Modules by Section */}
-        {SECTIONS.map(sec => (
+        {allSections.map(sec => (
           <div key={sec.name} className="mb-8">
             <div className="flex items-center gap-3 mb-4">
               <h3 className="text-lg font-display font-bold text-navy">{sec.name}</h3>
@@ -327,7 +337,7 @@ export default function CourseApp() {
             </div>
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
               {sec.modules.map(modId => {
-                const mod = MODULES.find(m => m.id === modId)!;
+                const mod = allModules.find(m => m.id === modId)!;
                 const isLocked = mod.tier === "premium" && userTier === "free";
                 const isComplete = completedModules.includes(mod.id);
 
