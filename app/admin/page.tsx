@@ -268,7 +268,9 @@ export default function AdminDashboard() {
   }
 
   // ===== Document Upload =====
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  const [docParsing, setDocParsing] = useState(false);
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setDocFileName(file.name);
@@ -277,12 +279,44 @@ export default function AdminDashboard() {
       const nameWithoutExt = file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ");
       setDocModuleName(nameWithoutExt);
     }
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      setDocContent(text || "");
-    };
-    reader.readAsText(file);
+
+    const fileName = file.name.toLowerCase();
+    // For plain text files, read directly in browser
+    if (fileName.endsWith(".txt") || fileName.endsWith(".md") || fileName.endsWith(".csv")) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        setDocContent(text || "");
+      };
+      reader.readAsText(file);
+      return;
+    }
+
+    // For PDF, DOCX, DOC — send to server for parsing
+    setDocParsing(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/parse-document", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${authToken}` },
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(err.error || "Failed to parse file");
+      }
+      const result = await res.json();
+      setDocContent(result.text);
+      setChatMessages(prev => [...prev, {
+        role: "assistant",
+        content: `Parsed **${file.name}** successfully (${result.charCount.toLocaleString()} characters extracted). You can now click "Create Module from Document" to generate a training module from it.`
+      }]);
+    } catch (err: any) {
+      alert("Error parsing file: " + err.message);
+      setDocFileName("");
+    }
+    setDocParsing(false);
   }
 
   async function aiGenerateFromDocument() {
@@ -828,11 +862,14 @@ export default function AdminDashboard() {
                   <label className="text-xs font-semibold text-gray-500 mb-1 block">Upload File</label>
                   <input
                     type="file"
-                    accept=".txt,.md,.csv,.doc,.docx,.rtf"
+                    accept=".pdf,.doc,.docx,.txt,.md,.csv,.rtf"
                     onChange={handleFileUpload}
-                    className="w-full text-sm text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-accent/10 file:text-accent hover:file:bg-accent/20"
+                    disabled={docParsing}
+                    className="w-full text-sm text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-accent/10 file:text-accent hover:file:bg-accent/20 disabled:opacity-50"
                   />
-                  {docFileName && <div className="text-xs text-accent mt-1">Loaded: {docFileName}</div>}
+                  {docParsing && <div className="text-xs text-purple-600 mt-1 animate-pulse">Parsing document... this may take a moment for large files.</div>}
+                  {!docParsing && docFileName && <div className="text-xs text-accent mt-1">Loaded: {docFileName} ({docContent.length.toLocaleString()} chars)</div>}
+                  <div className="text-[10px] text-gray-400 mt-1">Supports: PDF, DOCX, DOC, TXT, MD, CSV</div>
                 </div>
 
                 <div className="mb-3">
