@@ -124,7 +124,7 @@ export default function CourseDetail() {
 
           <div className="flex items-center gap-4 flex-wrap">
             {!user ? (
-              <a href="/dashboard" className="bg-terra text-white font-semibold px-8 py-3 rounded-xl hover:bg-terra-light transition-colors">
+              <a href={`/login?redirect=/courses/${slug}`} className="bg-terra text-white font-semibold px-8 py-3 rounded-xl hover:bg-terra-light transition-colors">
                 Sign In to Enroll
               </a>
             ) : isEnrolled ? (

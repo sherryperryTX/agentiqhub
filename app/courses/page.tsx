@@ -83,7 +83,7 @@ export default function CourseCatalog() {
                 </button>
               </>
             ) : (
-              <a href="/dashboard" className="bg-terra text-white text-sm font-semibold px-5 py-2 rounded-xl hover:bg-terra-light transition-colors">
+              <a href="/login?redirect=/courses" className="bg-terra text-white text-sm font-semibold px-5 py-2 rounded-xl hover:bg-terra-light transition-colors">
                 Sign In
               </a>
             )}
