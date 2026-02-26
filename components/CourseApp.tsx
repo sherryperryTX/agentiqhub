@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase, getUserCourseAccess, enrollInFreeCourse } from "@/lib/supabase";
 import { MODULES as STATIC_MODULES, SECTIONS as STATIC_SECTIONS, type Module, type Lesson } from "@/lib/course-data";
 import { loadModules, buildSections, loadCourseBySlug, hasFullAccess } from "@/lib/course-loader";
@@ -36,20 +36,29 @@ export default function CourseApp({ courseSlug }: CourseAppProps) {
   const [authError, setAuthError] = useState("");
   const [loading, setLoading] = useState(true);
 
+  // Prevent double-loading from getSession + onAuthStateChange both firing
+  const dataLoadedRef = useRef(false);
+
   // Check for existing session on mount
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
+      if (session?.user && !dataLoadedRef.current) {
+        dataLoadedRef.current = true;
         loadUserData(session.user.id, session.user.email || "");
-      } else {
+      } else if (!session?.user) {
         setLoading(false);
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Only handle actual auth changes, not INITIAL_SESSION or TOKEN_REFRESHED
+      // INITIAL_SESSION is handled by getSession() above
+      // TOKEN_REFRESHED should NOT reload data (it was causing progress resets on mobile)
+      if (event === "SIGNED_IN" && session?.user && !dataLoadedRef.current) {
+        dataLoadedRef.current = true;
         loadUserData(session.user.id, session.user.email || "");
-      } else {
+      } else if (event === "SIGNED_OUT") {
+        dataLoadedRef.current = false;
         setUser(null);
         setPage("login");
       }
@@ -107,12 +116,20 @@ export default function CourseApp({ courseSlug }: CourseAppProps) {
       setHasAccess(profile.tier === "premium");
     }
 
-    // Load progress
-    const { data: completions } = await supabase.from("module_completions").select("module_id").eq("user_id", userId);
-    const { data: progress } = await supabase.from("lesson_progress").select("lesson_id").eq("user_id", userId);
+    // Load progress — use Promise.all to load in parallel, and protect against null/error responses
+    const [completionsRes, progressRes] = await Promise.all([
+      supabase.from("module_completions").select("module_id").eq("user_id", userId),
+      supabase.from("lesson_progress").select("lesson_id").eq("user_id", userId),
+    ]);
 
-    setCompletedModules(completions?.map((c: any) => c.module_id) || []);
-    setCompletedLessons(progress?.map((p: any) => p.lesson_id) || []);
+    // Only update state if we got valid data — never overwrite with empty on error
+    if (completionsRes.data) {
+      setCompletedModules(completionsRes.data.map((c: any) => c.module_id));
+    }
+    if (progressRes.data) {
+      setCompletedLessons(progressRes.data.map((p: any) => p.lesson_id));
+    }
+
     setPage("dashboard");
     setLoading(false);
   }
@@ -140,9 +157,15 @@ export default function CourseApp({ courseSlug }: CourseAppProps) {
   }
 
   async function markLessonComplete(lessonId: string) {
-    if (!user || completedLessons.includes(lessonId)) return;
-    await supabase.from("lesson_progress").upsert({ user_id: user.id, lesson_id: lessonId }, { onConflict: "user_id,lesson_id" });
-    setCompletedLessons([...completedLessons, lessonId]);
+    if (!user) return;
+    // Use functional updater to avoid stale closure issues
+    setCompletedLessons(prev => {
+      if (prev.includes(lessonId)) return prev;
+      // Save to database (fire and forget with error logging)
+      supabase.from("lesson_progress").upsert({ user_id: user.id, lesson_id: lessonId }, { onConflict: "user_id,lesson_id" })
+        .then(({ error }) => { if (error) console.error("Error saving lesson progress:", error); });
+      return [...prev, lessonId];
+    });
   }
 
   async function handleQuizComplete(moduleId: number, score: number, passed: boolean) {
@@ -151,7 +174,11 @@ export default function CourseApp({ courseSlug }: CourseAppProps) {
       { user_id: user.id, module_id: moduleId, quiz_score: score },
       { onConflict: "user_id,module_id" }
     );
-    setCompletedModules([...completedModules, moduleId]);
+    // Use functional updater to avoid stale closure issues
+    setCompletedModules(prev => {
+      if (prev.includes(moduleId)) return prev;
+      return [...prev, moduleId];
+    });
   }
 
   async function handleUpgrade() {
