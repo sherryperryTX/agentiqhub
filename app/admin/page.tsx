@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 // ===== Types =====
 type Profile = { id: string; email: string; full_name: string; tier: "free" | "premium"; is_admin: boolean; is_internal: boolean; created_at: string };
 type ModuleCompletion = { user_id: string; module_id: number };
-type DBModule = { id: number; title: string; section: string; description: string; tier: string; sort_order: number };
+type DBModule = { id: number; title: string; section: string; description: string; tier: string; sort_order: number; course_id: number | null };
 type DBLesson = { id: string; module_id: number; title: string; content: string; video_url: string | null; handout_url: string | null; handout_name: string | null; sort_order: number };
 type DBQuiz = { id: number; module_id: number; question: string; options: string[]; correct_index: number; sort_order: number };
 type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -45,7 +45,7 @@ export default function AdminDashboard() {
   // New course form
   const [newCourse, setNewCourse] = useState({ title: "", slug: "", description: "", short_description: "", image_url: "", visibility: "public" as "public" | "internal", price: "0", stripe_price_id: "", is_active: true, sort_order: 0 });
   // New module form
-  const [newModule, setNewModule] = useState({ title: "", section: "", description: "", tier: "premium" });
+  const [newModule, setNewModule] = useState({ title: "", section: "", description: "", tier: "premium", course_id: null as number | null });
   // New lesson form
   const [newLesson, setNewLesson] = useState({ title: "", content: "", video_url: "", handout_url: "", handout_name: "" });
   // New quiz form
@@ -406,14 +406,14 @@ export default function AdminDashboard() {
     const nextOrder = modules.length > 0 ? Math.max(...modules.map(m => m.sort_order)) + 1 : 1;
     await supabase.from("course_modules").insert({ ...newModule, sort_order: nextOrder });
     await refreshContent();
-    setNewModule({ title: "", section: "", description: "", tier: "premium" });
+    setNewModule({ title: "", section: "", description: "", tier: "premium", course_id: null });
     setShowNewModule(false);
     setSaving(false);
   }
 
   async function updateModule(mod: DBModule) {
     setSaving(true);
-    await supabase.from("course_modules").update({ title: mod.title, section: mod.section, description: mod.description, tier: mod.tier }).eq("id", mod.id);
+    await supabase.from("course_modules").update({ title: mod.title, section: mod.section, description: mod.description, tier: mod.tier, course_id: mod.course_id }).eq("id", mod.id);
     await refreshContent();
     setSaving(false);
   }
@@ -792,9 +792,15 @@ export default function AdminDashboard() {
                     <input placeholder="Module title" value={newModule.title} onChange={e => setNewModule({ ...newModule, title: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-2" />
                     <input placeholder="Section name" value={newModule.section} onChange={e => setNewModule({ ...newModule, section: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-2" />
                     <input placeholder="Description" value={newModule.description} onChange={e => setNewModule({ ...newModule, description: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-2" />
-                    <select value={newModule.tier} onChange={e => setNewModule({ ...newModule, tier: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-3">
+                    <select value={newModule.tier} onChange={e => setNewModule({ ...newModule, tier: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mb-2">
                       <option value="free">Free</option>
                       <option value="premium">Premium</option>
+                    </select>
+                    <select value={newModule.course_id || ""} onChange={e => setNewModule({ ...newModule, course_id: e.target.value ? parseInt(e.target.value) : null })} className="w-full px-3 py-2 border rounded-lg text-sm mb-3">
+                      <option value="">No Course (Unassigned)</option>
+                      {courses.map(c => (
+                        <option key={c.id} value={c.id}>{c.title}</option>
+                      ))}
                     </select>
                     <div className="flex gap-2">
                       <button onClick={saveNewModule} disabled={saving} className="bg-accent text-white text-xs px-3 py-1.5 rounded-lg">{saving ? "Saving..." : "Save"}</button>
@@ -804,24 +810,30 @@ export default function AdminDashboard() {
                 )}
 
                 <div className="max-h-[calc(100vh-280px)] overflow-y-auto">
-                  {modules.map(mod => (
-                    <button
-                      key={mod.id}
-                      onClick={() => { setSelectedModule(mod); setEditingLesson(null); setEditingQuiz(null); }}
-                      className={`w-full text-left px-4 py-3 border-b hover:bg-gray-50 transition-colors ${selectedModule?.id === mod.id ? "bg-accent/5 border-l-4 border-l-accent" : ""}`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-gray-400">Module {mod.sort_order}</span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${mod.tier === "premium" ? "bg-gold/10 text-gold" : "bg-accent/10 text-accent"}`}>
-                          {mod.tier.toUpperCase()}
-                        </span>
-                      </div>
-                      <div className="text-sm font-semibold text-navy mt-1">{mod.title}</div>
-                      <div className="text-xs text-gray-400 mt-1">
-                        {lessons.filter(l => l.module_id === mod.id).length} lessons &middot; {quizzes.filter(q => q.module_id === mod.id).length} quizzes
-                      </div>
-                    </button>
-                  ))}
+                  {modules
+                    .filter(mod => selectedCourseFilter === null ? true : mod.course_id === selectedCourseFilter)
+                    .map(mod => {
+                      const modCourse = courses.find(c => c.id === mod.course_id);
+                      return (
+                        <button
+                          key={mod.id}
+                          onClick={() => { setSelectedModule(mod); setEditingLesson(null); setEditingQuiz(null); }}
+                          className={`w-full text-left px-4 py-3 border-b hover:bg-gray-50 transition-colors ${selectedModule?.id === mod.id ? "bg-accent/5 border-l-4 border-l-accent" : ""}`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-gray-400">Module {mod.sort_order}</span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${mod.tier === "premium" ? "bg-gold/10 text-gold" : "bg-accent/10 text-accent"}`}>
+                              {mod.tier.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="text-sm font-semibold text-navy mt-1">{mod.title}</div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            {modCourse ? <span className="text-accent">{modCourse.title}</span> : <span className="text-orange-400">Unassigned</span>}
+                            {" · "}{lessons.filter(l => l.module_id === mod.id).length} lessons · {quizzes.filter(q => q.module_id === mod.id).length} quizzes
+                          </div>
+                        </button>
+                      );
+                    })}
                 </div>
               </div>
             </div>
@@ -839,11 +851,17 @@ export default function AdminDashboard() {
                           onChange={e => setSelectedModule({ ...selectedModule, title: e.target.value })}
                           className="text-xl font-display font-bold text-navy border-b border-transparent hover:border-gray-200 focus:border-accent focus:outline-none w-full pb-1"
                         />
-                        <div className="flex gap-3 mt-3">
+                        <div className="flex gap-3 mt-3 flex-wrap">
                           <input value={selectedModule.section} onChange={e => setSelectedModule({ ...selectedModule, section: e.target.value })} placeholder="Section" className="text-sm px-3 py-1.5 border rounded-lg w-48" />
                           <select value={selectedModule.tier} onChange={e => setSelectedModule({ ...selectedModule, tier: e.target.value })} className="text-sm px-3 py-1.5 border rounded-lg">
                             <option value="free">Free</option>
                             <option value="premium">Premium</option>
+                          </select>
+                          <select value={selectedModule.course_id || ""} onChange={e => setSelectedModule({ ...selectedModule, course_id: e.target.value ? parseInt(e.target.value) : null })} className="text-sm px-3 py-1.5 border rounded-lg">
+                            <option value="">No Course (Unassigned)</option>
+                            {courses.map(c => (
+                              <option key={c.id} value={c.id}>{c.title}</option>
+                            ))}
                           </select>
                         </div>
                         <textarea
