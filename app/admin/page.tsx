@@ -42,6 +42,11 @@ export default function AdminDashboard() {
   const [showNewQuiz, setShowNewQuiz] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Drag and drop for module reordering
+  const [draggedModuleId, setDraggedModuleId] = useState<number | null>(null);
+  const [dragOverModuleId, setDragOverModuleId] = useState<number | null>(null);
+  const [reordering, setReordering] = useState(false);
+
   // New course form
   const [newCourse, setNewCourse] = useState({ title: "", slug: "", description: "", short_description: "", image_url: "", visibility: "public" as "public" | "internal", price: "0", stripe_price_id: "", is_active: true, sort_order: 0 });
   // New module form
@@ -576,6 +581,77 @@ export default function AdminDashboard() {
     setCourses(data || []);
   }
 
+  // Drag and drop module reordering
+  function handleDragStart(e: React.DragEvent, moduleId: number) {
+    setDraggedModuleId(moduleId);
+    e.dataTransfer.effectAllowed = "move";
+    // Make the drag image slightly transparent
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = "0.5";
+    }
+  }
+
+  function handleDragEnd(e: React.DragEvent) {
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = "1";
+    }
+    setDraggedModuleId(null);
+    setDragOverModuleId(null);
+  }
+
+  function handleDragOver(e: React.DragEvent, moduleId: number) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (moduleId !== draggedModuleId) {
+      setDragOverModuleId(moduleId);
+    }
+  }
+
+  function handleDragLeave() {
+    setDragOverModuleId(null);
+  }
+
+  async function handleDrop(e: React.DragEvent, targetModuleId: number) {
+    e.preventDefault();
+    setDragOverModuleId(null);
+
+    if (!draggedModuleId || draggedModuleId === targetModuleId) return;
+
+    // Get the filtered list (same as what's displayed)
+    const displayedModules = modules
+      .filter(mod => selectedCourseFilter === null ? true : mod.course_id === selectedCourseFilter)
+      .sort((a, b) => a.sort_order - b.sort_order);
+
+    const draggedIndex = displayedModules.findIndex(m => m.id === draggedModuleId);
+    const targetIndex = displayedModules.findIndex(m => m.id === targetModuleId);
+
+    if (draggedIndex === -1 || targetIndex === -1) return;
+
+    // Reorder the displayed modules
+    const reordered = [...displayedModules];
+    const [moved] = reordered.splice(draggedIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+
+    // Update sort_order for each module in the new order
+    setReordering(true);
+    try {
+      const updates = reordered.map((mod, index) => ({
+        id: mod.id,
+        sort_order: index + 1,
+      }));
+
+      for (const update of updates) {
+        await supabase.from("course_modules").update({ sort_order: update.sort_order }).eq("id", update.id);
+      }
+
+      await refreshContent();
+    } catch (err: any) {
+      alert("Error reordering modules: " + err.message);
+    }
+    setReordering(false);
+    setDraggedModuleId(null);
+  }
+
   const filteredProfiles = profiles.filter(p =>
     p.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.full_name?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -809,29 +885,49 @@ export default function AdminDashboard() {
                   </div>
                 )}
 
+                {reordering && (
+                  <div className="px-4 py-2 bg-accent/10 text-accent text-xs font-semibold text-center animate-pulse">
+                    Saving new order...
+                  </div>
+                )}
                 <div className="max-h-[calc(100vh-280px)] overflow-y-auto">
                   {modules
                     .filter(mod => selectedCourseFilter === null ? true : mod.course_id === selectedCourseFilter)
+                    .sort((a, b) => a.sort_order - b.sort_order)
                     .map(mod => {
                       const modCourse = courses.find(c => c.id === mod.course_id);
+                      const isDragOver = dragOverModuleId === mod.id && draggedModuleId !== mod.id;
                       return (
-                        <button
+                        <div
                           key={mod.id}
+                          draggable
+                          onDragStart={e => handleDragStart(e, mod.id)}
+                          onDragEnd={handleDragEnd}
+                          onDragOver={e => handleDragOver(e, mod.id)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={e => handleDrop(e, mod.id)}
                           onClick={() => { setSelectedModule(mod); setEditingLesson(null); setEditingQuiz(null); }}
-                          className={`w-full text-left px-4 py-3 border-b hover:bg-gray-50 transition-colors ${selectedModule?.id === mod.id ? "bg-accent/5 border-l-4 border-l-accent" : ""}`}
+                          className={`w-full text-left px-4 py-3 border-b hover:bg-gray-50 transition-all cursor-grab active:cursor-grabbing ${
+                            selectedModule?.id === mod.id ? "bg-accent/5 border-l-4 border-l-accent" : ""
+                          } ${isDragOver ? "border-t-2 border-t-accent bg-accent/5" : ""} ${
+                            draggedModuleId === mod.id ? "opacity-50" : ""
+                          }`}
                         >
                           <div className="flex items-center justify-between">
-                            <span className="text-xs text-gray-400">Module {mod.sort_order}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-300 text-sm cursor-grab" title="Drag to reorder">&#9776;</span>
+                              <span className="text-xs text-gray-400">Module {mod.sort_order}</span>
+                            </div>
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${mod.tier === "premium" ? "bg-gold/10 text-gold" : "bg-accent/10 text-accent"}`}>
                               {mod.tier.toUpperCase()}
                             </span>
                           </div>
-                          <div className="text-sm font-semibold text-navy mt-1">{mod.title}</div>
-                          <div className="text-xs text-gray-400 mt-1">
+                          <div className="text-sm font-semibold text-navy mt-1 ml-6">{mod.title}</div>
+                          <div className="text-xs text-gray-400 mt-1 ml-6">
                             {modCourse ? <span className="text-accent">{modCourse.title}</span> : <span className="text-orange-400">Unassigned</span>}
                             {" · "}{lessons.filter(l => l.module_id === mod.id).length} lessons · {quizzes.filter(q => q.module_id === mod.id).length} quizzes
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                 </div>
