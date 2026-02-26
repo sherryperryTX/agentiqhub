@@ -18,6 +18,13 @@ IF v_course_id IS NULL THEN
   RAISE EXCEPTION 'Course not found. Run 05-add-courses.sql first.';
 END IF;
 
+-- Clean up previous run if exists (safe re-run)
+DELETE FROM course_quizzes WHERE module_id IN (
+  SELECT id FROM course_modules WHERE course_id = v_course_id AND title = 'Handling Difficult Buyers, Sellers, and Agents'
+);
+DELETE FROM course_lessons WHERE id IN ('ss-0-1', 'ss-0-2', 'ss-0-3');
+DELETE FROM course_modules WHERE course_id = v_course_id AND title = 'Handling Difficult Buyers, Sellers, and Agents';
+
 -- Bump existing modules up by 1 so the new module can be sort_order 1
 UPDATE course_modules
 SET sort_order = sort_order + 1
