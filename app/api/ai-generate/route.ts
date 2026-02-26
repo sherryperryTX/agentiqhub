@@ -259,7 +259,19 @@ The current course has these sections:
     if (!response.ok) {
       const errorText = await response.text();
       console.error("Anthropic API error:", response.status, errorText);
-      return NextResponse.json({ error: `AI error (${response.status}): ${errorText.substring(0, 200)}` }, { status: 500 });
+      let friendlyError = `AI error (${response.status})`;
+      if (response.status === 401) {
+        friendlyError = "Invalid Anthropic API key. Please check the ANTHROPIC_API_KEY in Vercel environment variables.";
+      } else if (response.status === 429) {
+        friendlyError = "Rate limit exceeded. Please wait a moment and try again.";
+      } else if (response.status === 400) {
+        friendlyError = `Bad request: ${errorText.substring(0, 300)}`;
+      } else if (response.status === 403) {
+        friendlyError = "API key does not have permission for this model. Check your Anthropic plan.";
+      } else {
+        friendlyError = `AI error (${response.status}): ${errorText.substring(0, 300)}`;
+      }
+      return NextResponse.json({ error: friendlyError }, { status: 500 });
     }
 
     const result = await response.json();

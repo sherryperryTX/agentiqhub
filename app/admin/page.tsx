@@ -130,8 +130,8 @@ export default function AdminDashboard() {
       // Send full conversation history so AI has context of the planning discussion
       const result = await callAI("chat", { message: userMsg, history: chatMessages });
       setChatMessages(prev => [...prev, { role: "assistant", content: result.text }]);
-    } catch {
-      setChatMessages(prev => [...prev, { role: "assistant", content: "Sorry, I encountered an error. Please check that the Anthropic API key is configured in Vercel." }]);
+    } catch (err: any) {
+      setChatMessages(prev => [...prev, { role: "assistant", content: `Sorry, I encountered an error: ${err.message || "Unknown error"}. Please check the Anthropic API key in Vercel environment variables.` }]);
     }
     setAiLoading(false);
   }
